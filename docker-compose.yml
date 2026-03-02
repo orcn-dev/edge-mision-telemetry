@@ -1,0 +1,58 @@
+version: '3.9'
+
+services:
+  ai:
+    build: ./services/ai-service
+    depends_on:
+      - postgres
+    ports:
+      - "9101:9101"
+  ingest:
+    build:
+      context: ./services/ingest-api
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+      MQTT_TOPIC: telemetry/#
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: telemetry
+      PG_USER: telemetry
+      PG_PASS: telemetry
+    depends_on:
+      - mqtt
+      - postgres
+    ports:
+      - "8000:8000"
+  mqtt:
+    image: eclipse-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infra/mosquitto:/mosquitto/config
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry
+      POSTGRES_DB: telemetry
+    ports:
+      - "5432:5432"
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - ingest
+      - ai
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
