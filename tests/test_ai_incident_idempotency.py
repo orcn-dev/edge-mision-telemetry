@@ -49,33 +49,53 @@ def test_anomaly_score_is_capped_at_one():
     assert ai_service.detect_anomaly(60.0, 0.95) == 1.0
 
 
-def test_normal_telemetry_does_not_create_incident():
-    connection = FakeConnection([(10, "node-01", 1000, 42.0, 0.2)])
+def test_no_pending_event_returns_no_data():
+    connection = FakeConnection([None])
 
-    result = ai_service.process_latest_event(lambda: connection)
+    result = ai_service.process_next_event(lambda: connection)
+
+    assert result == "no_data"
+    assert connection.closed is True
+
+
+def test_normal_telemetry_is_evaluated_once_without_incident():
+    connection = FakeConnection(
+        [
+            (10, "node-01", 1000, 42.0, 0.2),
+            (10,),
+        ]
+    )
+
+    result = ai_service.process_next_event(lambda: connection)
 
     assert result == "normal"
     assert connection.closed is True
-    assert len(connection.cursor_instance.executed_sql) == 1
+    assert len(connection.cursor_instance.executed_sql) == 2
+    evaluation_sql = connection.cursor_instance.executed_sql[1][0]
+    assert "INSERT INTO telemetry_evaluations" in evaluation_sql
+    assert "ON CONFLICT (telemetry_event_id) DO NOTHING" in evaluation_sql
 
 
-def test_high_risk_event_creates_one_incident():
+def test_high_risk_event_creates_one_evaluation_and_one_incident():
     connection = FakeConnection(
         [
             (10, "node-01", 1000, 60.0, 0.95),
+            (10,),
             (501,),
         ]
     )
 
-    result = ai_service.process_latest_event(lambda: connection)
+    result = ai_service.process_next_event(lambda: connection)
 
     assert result == "incident_created"
     assert connection.closed is True
-    insert_sql = connection.cursor_instance.executed_sql[1][0]
-    assert "ON CONFLICT (telemetry_event_id) DO NOTHING" in insert_sql
+    assert len(connection.cursor_instance.executed_sql) == 3
+    incident_sql = connection.cursor_instance.executed_sql[2][0]
+    assert "INSERT INTO incidents" in incident_sql
+    assert "ON CONFLICT (telemetry_event_id) DO NOTHING" in incident_sql
 
 
-def test_replayed_high_risk_event_does_not_create_second_incident():
+def test_concurrent_evaluation_is_rejected_by_unique_constraint():
     connection = FakeConnection(
         [
             (10, "node-01", 1000, 60.0, 0.95),
@@ -83,7 +103,23 @@ def test_replayed_high_risk_event_does_not_create_second_incident():
         ]
     )
 
-    result = ai_service.process_latest_event(lambda: connection)
+    result = ai_service.process_next_event(lambda: connection)
+
+    assert result == "duplicate_evaluation"
+    assert connection.closed is True
+    assert len(connection.cursor_instance.executed_sql) == 2
+
+
+def test_duplicate_incident_is_not_inserted_again():
+    connection = FakeConnection(
+        [
+            (10, "node-01", 1000, 60.0, 0.95),
+            (10,),
+            None,
+        ]
+    )
+
+    result = ai_service.process_next_event(lambda: connection)
 
     assert result == "duplicate_incident"
     assert connection.closed is True
