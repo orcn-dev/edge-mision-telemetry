@@ -75,8 +75,8 @@
       "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
       "id": 7,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"expr": "increase(telemetry_incident_conflicts_total[5m])", "refId": "A"}],
-      "title": "Prevented Duplicate Incidents / 5m",
+      "targets": [{"expr": "increase(telemetry_anomaly_evaluations_total[5m])", "refId": "A"}],
+      "title": "Anomaly Evaluations / 5m",
       "type": "stat"
     },
     {
@@ -85,8 +85,8 @@
       "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
       "id": 8,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"expr": "increase(telemetry_db_retries_total[5m])", "refId": "A"}],
-      "title": "Ingest DB Retries / 5m",
+      "targets": [{"expr": "increase(telemetry_evaluation_conflicts_total[5m])", "refId": "A"}],
+      "title": "Evaluation Conflicts / 5m",
       "type": "stat"
     },
     {
@@ -108,6 +108,6 @@
   "timezone": "browser",
   "title": "Edge Mission Telemetry — Reliability Overview",
   "uid": "edge-mission-reliability",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
