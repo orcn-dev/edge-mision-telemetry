@@ -48,43 +48,41 @@ jobs:
       - name: Build and start stack
         run: docker compose up -d --build
 
-      - name: Wait for ingest health
+      - name: Wait for database and MQTT readiness
         run: |
-          for attempt in {1..30}; do
-            if curl --fail --silent http://localhost:8000/healthz; then
+          for attempt in {1..45}; do
+            HEALTH=$(curl --silent http://localhost:8000/healthz || true)
+            echo "$HEALTH"
+            if echo "$HEALTH" | grep -q '"status":"ok"' && echo "$HEALTH" | grep -q '"mqtt":"subscribed"'; then
               exit 0
             fi
             sleep 2
           done
           docker compose ps
-          docker compose logs ingest postgres
+          docker compose logs ingest mqtt postgres
           exit 1
 
       - name: Publish the same telemetry packet concurrently
         run: |
           PAYLOAD='{"device_id":"node-ci","seq":42,"ts":1772490151,"temp":60.0,"vibration":0.95}'
+          docker compose exec -T -e "PAYLOAD=$PAYLOAD" mqtt sh -c 'mosquitto_pub -h localhost -q 1 -t telemetry/node-ci -m "$PAYLOAD" & mosquitto_pub -h localhost -q 1 -t telemetry/node-ci -m "$PAYLOAD" & wait'
 
-          docker compose exec -T mqtt mosquitto_pub -h localhost -t telemetry/node-ci -m "$PAYLOAD" &
-          FIRST_PID=$!
-          docker compose exec -T mqtt mosquitto_pub -h localhost -t telemetry/node-ci -m "$PAYLOAD" &
-          SECOND_PID=$!
-          wait "$FIRST_PID" "$SECOND_PID"
-
-          sleep 12
-
-      - name: Verify one durable result per event
+      - name: Wait for one durable result per event
         run: |
-          TELEMETRY_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM telemetry_events WHERE device_id='node-ci' AND seq=42;")
-          EVALUATION_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM telemetry_evaluations e JOIN telemetry_events t ON t.id=e.telemetry_event_id WHERE t.device_id='node-ci' AND t.seq=42;")
-          INCIDENT_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM incidents i JOIN telemetry_events t ON t.id=i.telemetry_event_id WHERE t.device_id='node-ci' AND t.seq=42;")
+          for attempt in {1..30}; do
+            TELEMETRY_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM telemetry_events WHERE device_id='node-ci' AND seq=42;")
+            EVALUATION_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM telemetry_evaluations e JOIN telemetry_events t ON t.id=e.telemetry_event_id WHERE t.device_id='node-ci' AND t.seq=42;")
+            INCIDENT_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM incidents i JOIN telemetry_events t ON t.id=i.telemetry_event_id WHERE t.device_id='node-ci' AND t.seq=42;")
 
-          echo "telemetry_rows=$TELEMETRY_ROWS"
-          echo "evaluation_rows=$EVALUATION_ROWS"
-          echo "incident_rows=$INCIDENT_ROWS"
+            echo "telemetry_rows=$TELEMETRY_ROWS evaluation_rows=$EVALUATION_ROWS incident_rows=$INCIDENT_ROWS"
 
-          test "$TELEMETRY_ROWS" = "1"
-          test "$EVALUATION_ROWS" = "1"
-          test "$INCIDENT_ROWS" = "1"
+            if [ "$TELEMETRY_ROWS" = "1" ] && [ "$EVALUATION_ROWS" = "1" ] && [ "$INCIDENT_ROWS" = "1" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs ingest mqtt ai postgres
+          exit 1
 
       - name: Verify reliability metrics are visible
         run: |
