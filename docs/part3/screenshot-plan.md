@@ -33,7 +33,7 @@ PASS: duplicate delivery produced one stored packet, one evaluation and one inci
 
 Caption:
 
-> Aynı paket iki eş zamanlı süreçten gönderildi. Sistem iki teslimatı gördü; ancak yalnızca bir telemetri kaydı, bir değerlendirme ve bir incident oluşturdu.
+> Aynı paket iki eş zamanlı süreçten gönderildi. Sistem iki teslimatı gördü; ancak yalnızca bir telemetri kaydı, bir kalıcı değerlendirme ve bir incident oluşturdu.
 
 ## 03 — Concurrency-safe anomaly worker
 
@@ -52,7 +52,7 @@ ON CONFLICT (telemetry_event_id) DO NOTHING
 
 Caption:
 
-> Satır kilidi çalışanların aynı işi paylaşmasını sağlar; unique constraint ise yarış koşuluna karşı son savunma hattıdır.
+> Satır kilidi çalışanların aynı işi paylaşmasını sağlar; unique constraint ise yarış koşuluna karşı son savunma hattıdır. Sonuç, global “exactly once” iddiası değil, her event için tek kalıcı değerlendirmedir.
 
 ## 04 — Automated tests
 
@@ -85,7 +85,7 @@ The integration job must visibly include:
 
 ```text
 Publish the same telemetry packet concurrently
-Verify exactly-once persistence and processing
+Verify one durable result per event
 Verify reliability metrics are visible
 ```
 
