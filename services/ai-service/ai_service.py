@@ -106,58 +106,62 @@ def connect_with_retry(connection_factory: ConnectionFactory = pg_conn):
 
 
 def process_latest_event(connection_factory: ConnectionFactory = pg_conn) -> str:
-    with connect_with_retry(connection_factory) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, device_id, ts, temp, vibration
-                FROM telemetry_events
-                ORDER BY id DESC
-                LIMIT 1
-                """
-            )
-            row = cur.fetchone()
-
-            if row is None:
-                return "no_data"
-
-            telemetry_event_id, device_id, ts, temp, vibration = row
-            score = detect_anomaly(temp, vibration)
-            ANOMALY_SCORE.labels(device_id=device_id).set(score)
-            ANOMALY_EVALUATIONS.inc()
-
-            if score < 0.9:
-                log_event(
-                    "telemetry_evaluated",
-                    telemetry_event_id=telemetry_event_id,
-                    device_id=device_id,
-                    anomaly_score=score,
-                    incident_created=False,
+    conn = connect_with_retry(connection_factory)
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, device_id, ts, temp, vibration
+                    FROM telemetry_events
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """
                 )
-                return "normal"
+                row = cur.fetchone()
 
-            cur.execute(
-                """
-                INSERT INTO incidents (
-                    telemetry_event_id,
-                    device_id,
-                    ts,
-                    anomaly_score,
-                    reason
+                if row is None:
+                    return "no_data"
+
+                telemetry_event_id, device_id, ts, temp, vibration = row
+                score = detect_anomaly(temp, vibration)
+                ANOMALY_SCORE.labels(device_id=device_id).set(score)
+                ANOMALY_EVALUATIONS.inc()
+
+                if score < 0.9:
+                    log_event(
+                        "telemetry_evaluated",
+                        telemetry_event_id=telemetry_event_id,
+                        device_id=device_id,
+                        anomaly_score=score,
+                        incident_created=False,
+                    )
+                    return "normal"
+
+                cur.execute(
+                    """
+                    INSERT INTO incidents (
+                        telemetry_event_id,
+                        device_id,
+                        ts,
+                        anomaly_score,
+                        reason
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (telemetry_event_id) DO NOTHING
+                    RETURNING id
+                    """,
+                    (
+                        telemetry_event_id,
+                        device_id,
+                        ts,
+                        score,
+                        "High temperature/vibration anomaly score",
+                    ),
                 )
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (telemetry_event_id) DO NOTHING
-                RETURNING id
-                """,
-                (
-                    telemetry_event_id,
-                    device_id,
-                    ts,
-                    score,
-                    "High temperature/vibration anomaly score",
-                ),
-            )
-            inserted = cur.fetchone()
+                inserted = cur.fetchone()
+    finally:
+        conn.close()
 
     if inserted is None:
         INCIDENT_DUPLICATES.inc()
