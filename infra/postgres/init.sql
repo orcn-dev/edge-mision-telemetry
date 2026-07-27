@@ -16,6 +16,21 @@ CREATE INDEX IF NOT EXISTS ix_telemetry_events_created_at
 CREATE INDEX IF NOT EXISTS ix_telemetry_events_device_time
     ON telemetry_events (device_id, ts DESC);
 
+CREATE TABLE IF NOT EXISTS telemetry_evaluations (
+    telemetry_event_id BIGINT PRIMARY KEY,
+    anomaly_score DOUBLE PRECISION NOT NULL
+        CHECK (anomaly_score >= 0 AND anomaly_score <= 1),
+    is_anomaly BOOLEAN NOT NULL,
+    evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_evaluations_telemetry_event
+        FOREIGN KEY (telemetry_event_id)
+        REFERENCES telemetry_events (id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS ix_telemetry_evaluations_evaluated_at
+    ON telemetry_evaluations (evaluated_at DESC);
+
 CREATE TABLE IF NOT EXISTS incidents (
     id BIGSERIAL PRIMARY KEY,
     telemetry_event_id BIGINT NOT NULL,
