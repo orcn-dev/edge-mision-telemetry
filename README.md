@@ -46,7 +46,7 @@ ON CONFLICT (device_id, seq) DO NOTHING
 
 Two concurrent deliveries can therefore produce only one `telemetry_events` row. The rejected replay is exposed through `telemetry_db_conflicts_total`.
 
-### Exactly-once anomaly evaluation
+### Effectively-once durable evaluation
 
 The anomaly worker selects the oldest unevaluated packet using:
 
@@ -54,7 +54,7 @@ The anomaly worker selects the oldest unevaluated packet using:
 FOR UPDATE OF t SKIP LOCKED
 ```
 
-Each telemetry event can have only one `telemetry_evaluations` row. The database constraint remains the final protection if multiple workers race for the same event.
+Each telemetry event can have only one durable `telemetry_evaluations` row. Row locking coordinates concurrent workers, while the unique database constraint remains the final protection if a race still occurs. This is a database-scoped effectively-once guarantee, not a claim of global exactly-once message delivery.
 
 ### Idempotent incident creation
 
@@ -89,7 +89,7 @@ The script:
 3. Waits for ingestion and anomaly evaluation.
 4. Verifies that the database contains exactly:
    - one telemetry row,
-   - one evaluation row,
+   - one durable evaluation row,
    - one incident row.
 5. Prints the duplicate and processing metrics for a screenshot-ready proof.
 
@@ -145,7 +145,7 @@ Build Docker Compose stack
 Publish duplicate packet concurrently
         |
         v
-Verify 1 packet + 1 evaluation + 1 incident
+Verify 1 packet + 1 durable evaluation + 1 incident
         |
         v
 Verify Prometheus metrics
