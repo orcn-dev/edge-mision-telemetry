@@ -60,11 +60,16 @@ jobs:
           docker compose logs ingest postgres
           exit 1
 
-      - name: Publish the same telemetry packet twice
+      - name: Publish the same telemetry packet concurrently
         run: |
           PAYLOAD='{"device_id":"node-ci","seq":42,"ts":1772490151,"temp":60.0,"vibration":0.95}'
-          docker compose exec -T mqtt mosquitto_pub -h localhost -t telemetry/node-ci -m "$PAYLOAD"
-          docker compose exec -T mqtt mosquitto_pub -h localhost -t telemetry/node-ci -m "$PAYLOAD"
+
+          docker compose exec -T mqtt mosquitto_pub -h localhost -t telemetry/node-ci -m "$PAYLOAD" &
+          FIRST_PID=$!
+          docker compose exec -T mqtt mosquitto_pub -h localhost -t telemetry/node-ci -m "$PAYLOAD" &
+          SECOND_PID=$!
+          wait "$FIRST_PID" "$SECOND_PID"
+
           sleep 12
 
       - name: Verify one telemetry row and one incident
