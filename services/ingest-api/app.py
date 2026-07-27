@@ -119,13 +119,17 @@ def insert_event(
         RETURNING id;
     """
 
-    with connect_with_retry(connection_factory) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (device_id, seq, ts, temp, vibration, json.dumps(payload)),
-            )
-            inserted = cur.fetchone()
+    conn = connect_with_retry(connection_factory)
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql,
+                    (device_id, seq, ts, temp, vibration, json.dumps(payload)),
+                )
+                inserted = cur.fetchone()
+    finally:
+        conn.close()
 
     if inserted is None:
         TELEMETRY_DB_CONFLICTS.inc()
@@ -143,7 +147,7 @@ def insert_event(
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    if int(reason_code) != 0:
+    if getattr(reason_code, "is_failure", False):
         logger.error("MQTT connection failed with reason code %s", reason_code)
         return
 
@@ -158,7 +162,7 @@ def on_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
         insert_event(payload)
-    except (ValueError, TypeError, json.JSONDecodeError, psycopg2.Error):
+    except (ValueError, TypeError, psycopg2.Error):
         TELEMETRY_INGEST_ERRORS.inc()
         logger.exception(
             json.dumps(
@@ -193,15 +197,19 @@ def shutdown():
 
 @app.get("/healthz")
 def healthz(response: Response):
+    conn = None
     try:
-        with pg_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
+        conn = pg_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
         return {"status": "ok", "database": "reachable"}
     except psycopg2.Error as exc:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "degraded", "database": "unreachable", "error": str(exc)}
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @app.get("/metrics")
