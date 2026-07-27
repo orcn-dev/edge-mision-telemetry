@@ -72,7 +72,7 @@ jobs:
 
           sleep 12
 
-      - name: Verify exactly-once persistence and processing
+      - name: Verify one durable result per event
         run: |
           TELEMETRY_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM telemetry_events WHERE device_id='node-ci' AND seq=42;")
           EVALUATION_ROWS=$(docker compose exec -T postgres psql -U telemetry -d telemetry -tAc "SELECT COUNT(*) FROM telemetry_evaluations e JOIN telemetry_events t ON t.id=e.telemetry_event_id WHERE t.device_id='node-ci' AND t.seq=42;")
