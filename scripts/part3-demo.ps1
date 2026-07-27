@@ -33,10 +33,15 @@ if (-not $healthy) {
     throw "Ingest service did not become ready with both PostgreSQL and MQTT."
 }
 
-$payload = '{"device_id":"node-part3","seq":42,"ts":1772490151,"temp":60.0,"vibration":0.95}'
+$payloadJson = '{"device_id":"node-part3","seq":42,"ts":1772490151,"temp":60.0,"vibration":0.95}'
+$payloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
 
 Write-Host "Publishing the same telemetry packet concurrently..."
-docker compose exec -T -e "PAYLOAD=$payload" mqtt sh -c 'mosquitto_pub -h localhost -q 1 -t telemetry/node-part3 -m "$PAYLOAD" & mosquitto_pub -h localhost -q 1 -t telemetry/node-part3 -m "$PAYLOAD" & wait'
+docker compose exec -T -e "PAYLOAD_B64=$payloadBase64" mqtt sh -c 'printf "%s" "$PAYLOAD_B64" | base64 -d | mosquitto_pub -h localhost -q 1 -t telemetry/node-part3 -s & printf "%s" "$PAYLOAD_B64" | base64 -d | mosquitto_pub -h localhost -q 1 -t telemetry/node-part3 -s & wait' | Out-Null
+
+if ($LASTEXITCODE -ne 0) {
+    throw "MQTT publish command failed with exit code $LASTEXITCODE."
+}
 
 Write-Host "Waiting for ingestion and anomaly evaluation..."
 $telemetryRows = "0"
