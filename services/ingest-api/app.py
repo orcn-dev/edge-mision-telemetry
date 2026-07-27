@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any, Callable, Dict, Literal
 
@@ -27,6 +28,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("telemetry-ingest")
+
+MQTT_READY = threading.Event()
 
 TELEMETRY_MESSAGES = Counter(
     "telemetry_messages_total",
@@ -148,11 +151,23 @@ def insert_event(
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if getattr(reason_code, "is_failure", False):
+        MQTT_READY.clear()
         logger.error("MQTT connection failed with reason code %s", reason_code)
         return
 
-    client.subscribe(MQTT_TOPIC)
-    log_event("mqtt_subscribed", topic=MQTT_TOPIC)
+    subscribe_result, message_id = client.subscribe(MQTT_TOPIC, qos=1)
+    if subscribe_result != mqtt.MQTT_ERR_SUCCESS:
+        MQTT_READY.clear()
+        logger.error("MQTT subscription failed with result %s", subscribe_result)
+        return
+
+    MQTT_READY.set()
+    log_event("mqtt_subscribed", topic=MQTT_TOPIC, qos=1, message_id=message_id)
+
+
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
+    MQTT_READY.clear()
+    log_event("mqtt_disconnected", reason_code=str(reason_code))
 
 
 def on_message(client, userdata, msg):
@@ -177,10 +192,11 @@ def on_message(client, userdata, msg):
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
+mqtt_client.on_disconnect = on_disconnect
 mqtt_client.on_message = on_message
 mqtt_client.reconnect_delay_set(min_delay=1, max_delay=30)
 
-app = FastAPI(title="Edge Mission Telemetry Ingest API", version="0.2.0")
+app = FastAPI(title="Edge Mission Telemetry Ingest API", version="0.2.1")
 
 
 @app.on_event("startup")
@@ -191,6 +207,7 @@ def startup():
 
 @app.on_event("shutdown")
 def shutdown():
+    MQTT_READY.clear()
     mqtt_client.loop_stop()
     mqtt_client.disconnect()
 
@@ -198,18 +215,35 @@ def shutdown():
 @app.get("/healthz")
 def healthz(response: Response):
     conn = None
+    database_status = "unreachable"
+    database_error = None
+
     try:
         conn = pg_conn()
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             cur.fetchone()
-        return {"status": "ok", "database": "reachable"}
+        database_status = "reachable"
     except psycopg2.Error as exc:
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "degraded", "database": "unreachable", "error": str(exc)}
+        database_error = str(exc)
     finally:
         if conn is not None:
             conn.close()
+
+    mqtt_status = "subscribed" if MQTT_READY.is_set() else "not_ready"
+    ready = database_status == "reachable" and MQTT_READY.is_set()
+
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    result = {
+        "status": "ok" if ready else "degraded",
+        "database": database_status,
+        "mqtt": mqtt_status,
+    }
+    if database_error is not None:
+        result["error"] = database_error
+    return result
 
 
 @app.get("/metrics")
